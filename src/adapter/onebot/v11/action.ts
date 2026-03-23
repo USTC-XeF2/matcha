@@ -140,6 +140,81 @@ const actionStrategy: ActionStrategy = {
     })
   },
 
+  /** 获取群历史消息 */
+  'get_group_msg_history': async ({
+    group_id,
+    message_seq = 0,
+    count = 20,
+    reverseOrder = false,
+  }: {
+    group_id: number
+    message_seq?: number
+    count?: number
+    reverseOrder?: boolean
+  }): Promise<ActionResponse<GroupMessageHistoryData> | ActionResponse<ErrorInfo>> => {
+    const state = useStateStore()
+    const groupId = group_id.toString()
+    const operator = await db.members.get({ groupId, userId: state.bot!.id })
+    if (!operator) {
+      return response(1403, { message: '没有加入该群' })
+    }
+
+    const limit = Math.max(0, Math.floor(count))
+    if (limit === 0) {
+      return response(0, { messages: [] })
+    }
+
+    const chat = useChatStore()
+    const sequence = Number(message_seq)
+    const hasSequence = Number.isFinite(sequence) && sequence > 0
+
+    const allGroupMessages = chat.chatLogs
+      .filter(chat => chat.type === 'message' && !chat.isRecall && chat.scene.detail_type === 'group' && Number(chat.scene.group_id) === group_id)
+      .map((chat) => {
+        const seq = Number(chat.scene.message_id)
+        return {
+          chat,
+          seq,
+        }
+      })
+      .filter(item => Number.isFinite(item.seq))
+      .sort((a, b) => a.seq - b.seq)
+
+    const scopedMessages = hasSequence ? allGroupMessages.filter(item => item.seq <= sequence) : allGroupMessages
+    let historyMessages = scopedMessages.slice(Math.max(scopedMessages.length - limit, 0))
+    if (!reverseOrder) {
+      historyMessages = historyMessages.reverse()
+    }
+
+    return response(0, {
+      messages: historyMessages
+        .map(({ chat, seq }) => {
+          const event = chat.event
+          if (!isGroupMessageEvent(event)) {
+            return null
+          }
+          return {
+            self_id: event.self_id,
+            user_id: event.user_id,
+            time: event.time,
+            message_id: event.message_id,
+            real_id: event.message_id,
+            message_seq: seq,
+            message_type: event.message_type,
+            sender: event.sender,
+            raw_message: event.raw_message,
+            font: event.font,
+            sub_type: event.sub_type,
+            message: event.message,
+            message_format: 'array',
+            post_type: event.post_type,
+            group_id: event.group_id,
+          }
+        })
+        .filter((item): item is GroupMessageHistoryInfo => !!item),
+    })
+  },
+
   /** 群组踢人 */
   'set_group_kick': async ({
     group_id,
@@ -495,6 +570,28 @@ interface MessageInfo {
   message: Messages[]
 }
 
+interface GroupMessageHistoryData {
+  messages: GroupMessageHistoryInfo[]
+}
+
+interface GroupMessageHistoryInfo {
+  self_id: number
+  user_id: number
+  time: number
+  message_id: number
+  real_id: number
+  message_seq: number
+  message_type: 'group'
+  sender: GroupSender
+  raw_message: string
+  font: number
+  sub_type: 'normal' | 'anonymous' | 'notice'
+  message: Messages[]
+  message_format: string
+  post_type: 'message'
+  group_id: number
+}
+
 interface StrangerInfo {
   user_id: number
   nickname: string
@@ -599,4 +696,11 @@ async function getMemberInfo(member: Member, role: 'owner' | 'admin' | 'member')
     unfriendly: false,
     card_changeable: cardChangeable,
   }
+}
+
+function isGroupMessageEvent(event?: unknown): event is GroupMessageEvent {
+  if (!event || typeof event !== 'object') {
+    return false
+  }
+  return (event as GroupMessageEvent).post_type === 'message' && (event as GroupMessageEvent).message_type === 'group'
 }
