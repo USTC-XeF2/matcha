@@ -171,7 +171,7 @@ const actionStrategy: ActionStrategy = {
     const allGroupMessages = chat.chatLogs
       .filter(chat => chat.type === 'message' && !chat.isRecall && chat.scene.detail_type === 'group' && Number(chat.scene.group_id) === group_id)
       .map((chat) => {
-        const seq = Number(chat.scene.message_id)
+        const seq = Number((chat.scene as { message_id: string }).message_id)
         return {
           chat,
           seq,
